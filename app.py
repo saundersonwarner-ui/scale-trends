@@ -69,14 +69,12 @@ with st.sidebar:
     st.divider()
     st.subheader("Data Management")
     
-    # CSV Upload
     uploaded_file = st.file_uploader("Import CSV", type="csv")
     if uploaded_file is not None:
         if st.button("Merge Uploaded Data", use_container_width=True):
             try:
                 up_df = pd.read_csv(uploaded_file)
                 up_df['Date'] = pd.to_datetime(up_df['Date'])
-                # Combine and keep the most recent entry for each date
                 combined = pd.concat([st.session_state.data, up_df], ignore_index=True)
                 st.session_state.data = combined.sort_values('Date').drop_duplicates('Date', keep='last').reset_index(drop=True)
                 save_all(st.session_state.data, settings)
@@ -85,7 +83,6 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Error: {e}")
 
-    # CSV Download
     csv_out = st.session_state.data.to_csv(index=False).encode('utf-8')
     st.download_button("Export to CSV", data=csv_out, file_name="scale_trends_backup.csv", mime='text/csv', use_container_width=True)
 
@@ -97,7 +94,6 @@ with st.expander("➕ Add or Edit Log", expanded=False):
     date = st.date_input("Date", datetime.now())
     date_ts = pd.to_datetime(date)
     
-    # Check if data already exists for this date
     existing_row = st.session_state.data[st.session_state.data['Date'] == date_ts]
     is_existing = not existing_row.empty
 
@@ -111,101 +107,4 @@ with st.expander("➕ Add or Edit Log", expanded=False):
     
     btn_col1, btn_col2 = st.columns([3, 1])
     
-    with btn_col1:
-        if st.button("SAVE TO SCALE TRENDS", use_container_width=True, type="primary"):
-            df = st.session_state.data
-            new_w = round(w_input, 1) if w_input > 0 else np.nan
-            new_m1 = int(c_input) if c_input > 0 else np.nan
-            new_m2 = int(wa_input) if wa_input > 0 else np.nan
-
-            if pd.isna(new_w) and pd.isna(new_m1) and pd.isna(new_m2):
-                st.error("Please enter a value.")
-            else:
-                if is_existing:
-                    idx = existing_row.index[0]
-                    if not pd.isna(new_w): df.at[idx, 'Weight_kg'] = new_w
-                    if not pd.isna(new_m1): df.at[idx, 'M1_val'] = new_m1
-                    if not pd.isna(new_m2): df.at[idx, 'M2_val'] = new_m2
-                else:
-                    new_entry = {'Date': date_ts, 'Weight_kg': new_w, 'M1_val': new_m1, 'M2_val': new_m2}
-                    df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
-                
-                st.session_state.data = df.sort_values('Date').reset_index(drop=True)
-                save_all(st.session_state.data, settings)
-                st.success("Entry Saved!")
-                st.rerun()
-
-    with btn_col2:
-        if is_existing:
-            if st.button("DELETE", use_container_width=True):
-                df = st.session_state.data
-                st.session_state.data = df[df['Date'] != date_ts].reset_index(drop=True)
-                save_all(st.session_state.data, settings)
-                st.warning("Deleted.")
-                st.rerun()
-
-# --- DASHBOARD & CHARTS ---
-df = st.session_state.data.copy()
-chart_cfg = {'displayModeBar': False, 'scrollZoom': False, 'staticPlot': False}
-
-if not df.empty:
-    ranges = {"Monthly": 30, "Quarterly": 90, "Yearly": 365, "All Time": 9999}
-    start_date = pd.Timestamp.now().normalize() - timedelta(days=ranges[view_option])
-    
-    if df['Weight_kg'].notnull().any():
-        df['Weight_7D_Avg'] = df['Weight_kg'].interpolate().rolling(window=7, min_periods=1).mean()
-    
-    view_df = df[df['Date'] >= start_date]
-    tab_w, tab_m = st.tabs(["Weight Trend", "Measurements"])
-
-   with tab_w:
-        valid_w = view_df.dropna(subset=['Weight_kg'])
-        if not valid_w.empty:
-            curr = valid_w['Weight_kg'].iloc[-1]
-            goal = settings['Goal_Weight']
-            st.metric("Current", f"{curr:.1f} kg", delta=f"{curr - goal:.1f} to goal", delta_color="inverse")
-            
-            # --- GOAL DATE PREDICTOR ---
-            if len(df) >= 7:
-                # Calculate 7-day rate of change
-                recent_avg = df['Weight_7D_Avg'].iloc[-1]
-                prev_avg = df['Weight_7D_Avg'].iloc[-7]
-                weekly_rate = recent_avg - prev_avg
-                
-                remaining_kg = curr - goal
-                
-                # Logic: If we are heavier than goal and losing weight, or lighter than goal and gaining
-                if (remaining_kg > 0 and weekly_rate < 0) or (remaining_kg < 0 and weekly_rate > 0):
-                    weeks_left = abs(remaining_kg / weekly_rate)
-                    prediction_date = datetime.now() + timedelta(weeks=weeks_left)
-                    st.success(f"🎯 **Goal Prediction:** {prediction_date.strftime('%b %d, %Y')} ({weeks_left:.1f} weeks)")
-                elif remaining_kg == 0:
-                    st.balloons()
-                    st.success("Goal Reached!")
-                else:
-                    st.info("📉 Not currently trending towards goal.")
-            else:
-                st.info("⏳ Log 7 days of data to see your Goal Predictor.")
-            
-            # --- CHART ---
-            fig_w = go.Figure()
-            fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_kg'], mode='markers', name='Raw', marker=dict(color='gray', opacity=0.4)))
-            fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_7D_Avg'], mode='lines', name='Trend', line=dict(color='#00CC96', width=4)))
-            fig_w.add_hline(y=goal, line_dash="dash", line_color="#FF4B4B")
-            fig_w.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=300, showlegend=False, xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
-            st.plotly_chart(fig_w, use_container_width=True, config=chart_cfg)
-
-    with tab_m:
-        m_df = view_df.dropna(subset=['M1_val', 'M2_val'], how='all')
-        if not m_df.empty:
-            fig_m = go.Figure()
-            if m_df['M1_val'].notnull().any():
-                fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M1_val'], mode='lines+markers', name=settings['M1_Name'], line=dict(color='#AB63FA')))
-            if m_df['M2_val'].notnull().any():
-                fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M2_val'], mode='lines+markers', name=settings['M2_Name'], line=dict(color='#FFA15A')))
-            fig_m.update_layout(margin=dict(l=10, r=10, t=30, b=10), height=350, legend=dict(orientation="h", y=1.1, x=1, xanchor="right"), xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
-            st.plotly_chart(fig_m, use_container_width=True, config=chart_cfg)
-        else:
-            st.info("No measurements logged yet.")
-else:
-    st.warning("Welcome! Start by adding your first entry above.")
+    with btn_
