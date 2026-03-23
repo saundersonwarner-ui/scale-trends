@@ -190,4 +190,24 @@ if not df.empty:
             fig_w = go.Figure()
             fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_kg'], mode='markers', name='Raw', marker=dict(color='gray', opacity=0.4)))
             if 'Weight_7D_Avg' in view_df.columns:
-                fig_w.add_trace(go.Scatter(x=view
+                fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_7D_Avg'], mode='lines', name='Trend', line=dict(color='#00CC96', width=4)))
+            fig_w.add_hline(y=goal, line_dash="dash", line_color="#FF4B4B")
+            fig_w.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=350, showlegend=False, xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+            st.plotly_chart(fig_w, use_container_width=True, config=chart_cfg)
+        else:
+            st.info("No weight data in this range.")
+
+    with tab_m:
+        m_df = view_df.dropna(subset=['M1_val', 'M2_val'], how='all')
+        if not m_df.empty:
+            fig_m = go.Figure()
+            if m_df['M1_val'].notnull().any():
+                fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M1_val'], mode='lines+markers', name=settings['M1_Name'], line=dict(color='#AB63FA')))
+            if m_df['M2_val'].notnull().any():
+                fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M2_val'], mode='lines+markers', name=settings['M2_Name'], line=dict(color='#FFA15A')))
+            fig_m.update_layout(margin=dict(l=10, r=10, t=30, b=10), height=350, legend=dict(orientation="h", y=1.1, x=1, xanchor="right"), xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+            st.plotly_chart(fig_m, use_container_width=True, config=chart_cfg)
+        else:
+            st.info("No measurements logged yet.")
+else:
+    st.warning("Welcome! Start by adding your first entry above.")
