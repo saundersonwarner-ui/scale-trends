@@ -158,20 +158,42 @@ if not df.empty:
     view_df = df[df['Date'] >= start_date]
     tab_w, tab_m = st.tabs(["Weight Trend", "Measurements"])
 
-    with tab_w:
+   with tab_w:
         valid_w = view_df.dropna(subset=['Weight_kg'])
         if not valid_w.empty:
             curr = valid_w['Weight_kg'].iloc[-1]
-            st.metric("Current", f"{curr:.1f} kg", delta=f"{curr - settings['Goal_Weight']:.1f} to goal", delta_color="inverse")
+            goal = settings['Goal_Weight']
+            st.metric("Current", f"{curr:.1f} kg", delta=f"{curr - goal:.1f} to goal", delta_color="inverse")
             
+            # --- GOAL DATE PREDICTOR ---
+            if len(df) >= 7:
+                # Calculate 7-day rate of change
+                recent_avg = df['Weight_7D_Avg'].iloc[-1]
+                prev_avg = df['Weight_7D_Avg'].iloc[-7]
+                weekly_rate = recent_avg - prev_avg
+                
+                remaining_kg = curr - goal
+                
+                # Logic: If we are heavier than goal and losing weight, or lighter than goal and gaining
+                if (remaining_kg > 0 and weekly_rate < 0) or (remaining_kg < 0 and weekly_rate > 0):
+                    weeks_left = abs(remaining_kg / weekly_rate)
+                    prediction_date = datetime.now() + timedelta(weeks=weeks_left)
+                    st.success(f"🎯 **Goal Prediction:** {prediction_date.strftime('%b %d, %Y')} ({weeks_left:.1f} weeks)")
+                elif remaining_kg == 0:
+                    st.balloons()
+                    st.success("Goal Reached!")
+                else:
+                    st.info("📉 Not currently trending towards goal.")
+            else:
+                st.info("⏳ Log 7 days of data to see your Goal Predictor.")
+            
+            # --- CHART ---
             fig_w = go.Figure()
             fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_kg'], mode='markers', name='Raw', marker=dict(color='gray', opacity=0.4)))
             fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_7D_Avg'], mode='lines', name='Trend', line=dict(color='#00CC96', width=4)))
-            fig_w.add_hline(y=settings['Goal_Weight'], line_dash="dash", line_color="#FF4B4B")
-            fig_w.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=350, showlegend=False, xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+            fig_w.add_hline(y=goal, line_dash="dash", line_color="#FF4B4B")
+            fig_w.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=300, showlegend=False, xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
             st.plotly_chart(fig_w, use_container_width=True, config=chart_cfg)
-        else:
-            st.info("No weight data in this range.")
 
     with tab_m:
         m_df = view_df.dropna(subset=['M1_val', 'M2_val'], how='all')
