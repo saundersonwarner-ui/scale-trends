@@ -5,130 +5,143 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import os
 
-# --- 1. APP CONFIG & STYLING ---
-st.set_page_config(page_title="Scale Trends", layout="centered", page_icon="⚖️")
+# --- App Configuration ---
+st.set_page_config(page_title="Scale Trends", layout="centered") 
 
-# Custom CSS for a cleaner mobile look
-st.markdown("""
-    <style>
-    .main { max-width: 600px; margin: 0 auto; }
-    .stMetric { background-color: #f0f2f6; padding: 15px; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 2. DATA PERSISTENCE ---
-DB_FILE = "scale_trends_data.csv"
+# --- Data & Settings Persistence ---
+DB_FILE = "fitness_data.csv"
+SETTINGS_FILE = "settings.csv"
 
 def load_data():
     if os.path.exists(DB_FILE):
         df = pd.read_csv(DB_FILE)
-        # Migration logic for older versions
-        df = df.rename(columns={'Chest_cm': 'M1_val', 'Waist_cm': 'M2_val'})
+        # Migration/Cleanup Logic
+        rename_map = {'Chest_cm': 'M1_val', 'Waist_cm': 'M2_val'}
+        df = df.rename(columns=rename_map)
+        for col in ['Date', 'Weight_kg', 'M1_val', 'M2_val']:
+            if col not in df.columns:
+                df[col] = np.nan
         df['Date'] = pd.to_datetime(df['Date'])
-        return df.sort_values('Date').reset_index(drop=True)
+        return df.sort_values('Date')
     return pd.DataFrame(columns=['Date', 'Weight_kg', 'M1_val', 'M2_val'])
 
-def save_data(df):
-    df.to_csv(DB_FILE, index=False)
+def load_settings():
+    if os.path.exists(SETTINGS_FILE):
+        try: return pd.read_csv(SETTINGS_FILE).iloc[0].to_dict()
+        except: pass
+    return {"Goal_Weight": 75.0, "M1_Name": "Chest", "M2_Name": "Waist"}
 
-# Initialize Session
+def save_all(df, settings_dict):
+    df.to_csv(DB_FILE, index=False)
+    pd.DataFrame([settings_dict]).to_csv(SETTINGS_FILE, index=False)
+
+# Initialize Session State
 if 'data' not in st.session_state:
     st.session_state.data = load_data()
+if 'settings' not in st.session_state:
+    st.session_state.settings = load_settings()
 
-# --- 3. SIDEBAR: SETTINGS & BACKUPS ---
-with st.sidebar:
-    st.header("⚙️ App Settings")
-    goal_w = st.number_input("Goal Weight (kg)", value=75.0, step=0.1)
-    m1_name = st.text_input("Measurement 1 Name", value="Chest")
-    m2_name = st.text_input("Measurement 2 Name", value="Waist")
-    
-    st.divider()
-    st.subheader("💾 Device Storage")
-    
-    # Export
-    if not st.session_state.data.empty:
-        csv_bytes = st.session_state.data.to_csv(index=False).encode('utf-8')
-        st.download_button("Export Data to Device", data=csv_bytes, 
-                           file_name=f"scale_trends_{datetime.now().strftime('%Y-%m-%d')}.csv", 
-                           mime="text/csv", use_container_width=True)
-    
-    # Import
-    uploaded = st.file_uploader("Import Backup CSV", type="csv")
-    if uploaded:
-        st.session_state.data = pd.read_csv(uploaded)
-        save_data(st.session_state.data)
-        st.success("Data Synced!")
-        st.rerun()
-
+settings = st.session_state.settings
 st.title("⚖️ Scale Trends")
 
-# --- 4. INPUT SECTION ---
-with st.expander("➕ Add New Log", expanded=False):
-    date_in = st.date_input("Date", datetime.now())
-    c1, c2, c3 = st.columns(3)
-    with c1: w_in = st.number_input("Weight (kg)", min_value=0.0, step=0.1)
-    with c2: val1 = st.number_input(m1_name, min_value=0.0, step=0.1)
-    with c3: val2 = st.number_input(m2_name, min_value=0.0, step=0.1)
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("Settings")
+    new_goal = st.number_input("Goal Weight (kg)", value=float(settings['Goal_Weight']), step=0.1, format="%.1f")
+    st.divider()
+    m1_label = st.text_input("Measurement 1 Name", value=settings['M1_Name'])
+    m2_label = st.text_input("Measurement 2 Name", value=settings['M2_Name'])
     
-    if st.button("SAVE ENTRY", type="primary", use_container_width=True):
-        new_row = pd.DataFrame([{'Date': pd.to_datetime(date_in), 'Weight_kg': w_in, 'M1_val': val1, 'M2_val': val2}])
-        updated_df = pd.concat([st.session_state.data, new_row], ignore_index=True).sort_values('Date')
-        st.session_state.data = updated_df
-        save_data(updated_df)
-        st.success("Entry Saved!")
+    if st.button("Update Settings", use_container_width=True):
+        settings.update({"Goal_Weight": new_goal, "M1_Name": m1_label, "M2_Name": m2_label})
+        st.session_state.settings = settings
+        save_all(st.session_state.data, settings)
         st.rerun()
 
-# --- 5. GOAL PREDICTIONS & INSIGHTS ---
-df = st.session_state.data
-if not df.empty and df['Weight_kg'].notnull().any():
-    # Calculate 7-Day Moving Average
-    df['Trend'] = df['Weight_kg'].rolling(window=7, min_periods=1).mean()
-    curr_w = df['Weight_kg'].iloc[-1]
+    st.divider()
+    view_option = st.selectbox("View Range", ["Monthly", "Quarterly", "Yearly", "All Time"])
+
+# --- INPUT SECTION ---
+with st.expander("➕ Add or Edit Log", expanded=False):
+    date = st.date_input("Date", datetime.now())
+    date_ts = pd.to_datetime(date)
     
-    st.subheader("Progress Insights")
+    existing_row = st.session_state.data[st.session_state.data['Date'] == date_ts]
+    is_existing = not existing_row.empty
+
+    col_w, col_c, col_wa = st.columns(3)
+    with col_w:
+        w_input = st.number_input("Weight (KG)", min_value=0.0, step=0.1, format="%.1f")
+    with col_c:
+        c_input = st.number_input(settings['M1_Name'], min_value=0, step=1)
+    with col_wa:
+        wa_input = st.number_input(settings['M2_Name'], min_value=0, step=1)
     
-    # Prediction Logic with Smart Prompts
-    if len(df) < 8:
-        st.info("📉 **Status:** Gathering data. We need at least 8 logs to calculate a trend.")
-    else:
-        # Calculate weekly velocity (last 7 days vs previous 7 days)
-        recent_avg = df['Trend'].iloc[-1]
-        past_avg = df['Trend'].iloc[-8]
-        weekly_rate = past_avg - recent_avg
-        
-        if curr_w <= goal_w:
-            st.balloons()
-            st.success(f"🎉 **Goal Reached!** You are currently {goal_w - curr_w:.1f}kg under your target.")
-        elif weekly_rate <= 0:
-            st.warning("⚖️ **Status:** Plateau/Maintenance. The goal date will reappear once a downward trend is detected over the last 7 days.")
-        else:
-            kg_to_go = curr_w - goal_w
-            weeks_to_goal = kg_to_go / weekly_rate
-            finish_date = datetime.now() + timedelta(weeks=weeks_to_goal)
-            
-            st.metric("Predicted Goal Date", finish_date.strftime('%d %B %Y'), 
-                      delta=f"{weekly_rate:.2f} kg/week", delta_color="normal")
-            st.caption(f"Estimated arrival at {goal_w}kg based on your recent 7-day velocity.")
-
-    # --- 6. CHARTS ---
-    tab1, tab2 = st.tabs(["Weight History", "Body Measurements"])
+    btn_col1, btn_col2 = st.columns([3, 1])
     
-    chart_cfg = {'displayModeBar': False, 'staticPlot': False, 'scrollZoom': False}
+    with btn_col1:
+        if st.button("SAVE TO SCALE TRENDS", use_container_width=True, type="primary"):
+            df = st.session_state.data
+            new_w = round(w_input, 1) if w_input > 0 else np.nan
+            new_m1 = int(c_input) if c_input > 0 else np.nan
+            new_m2 = int(wa_input) if wa_input > 0 else np.nan
 
-    with tab1:
-        fig_w = go.Figure()
-        fig_w.add_trace(go.Scatter(x=df['Date'], y=df['Weight_kg'], mode='markers', name='Actual', marker=dict(color='gray', opacity=0.3)))
-        fig_w.add_trace(go.Scatter(x=df['Date'], y=df['Trend'], mode='lines', name='Trend', line=dict(color='#00CC96', width=3)))
-        fig_w.add_hline(y=goal_w, line_dash="dash", line_color="red", annotation_text="Goal")
-        fig_w.update_layout(margin=dict(l=0,r=0,t=20,b=0), height=350, showlegend=False)
-        st.plotly_chart(fig_w, use_container_width=True, config=chart_cfg)
+            if pd.isna(new_w) and pd.isna(new_m1) and pd.isna(new_m2):
+                st.error("Enter a value first.")
+            else:
+                if is_existing:
+                    idx = existing_row.index[0]
+                    if not pd.isna(new_w): df.at[idx, 'Weight_kg'] = new_w
+                    if not pd.isna(new_m1): df.at[idx, 'M1_val'] = new_m1
+                    if not pd.isna(new_m2): df.at[idx, 'M2_val'] = new_m2
+                else:
+                    new_row = {'Date': date_ts, 'Weight_kg': new_w, 'M1_val': new_m1, 'M2_val': new_m2}
+                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                
+                st.session_state.data = df.sort_values('Date').reset_index(drop=True)
+                save_all(st.session_state.data, settings)
+                st.rerun()
 
-    with tab2:
-        fig_m = go.Figure()
-        if df['M1_val'].any(): fig_m.add_trace(go.Scatter(x=df['Date'], y=df['M1_val'], name=m1_name))
-        if df['M2_val'].any(): fig_m.add_trace(go.Scatter(x=df['Date'], y=df['M2_val'], name=m2_name))
-        fig_m.update_layout(margin=dict(l=0,r=0,t=20,b=0), height=350, legend=dict(orientation="h", y=1.1))
-        st.plotly_chart(fig_m, use_container_width=True, config=chart_cfg)
+    with btn_col2:
+        if is_existing:
+            if st.button("DELETE", use_container_width=True):
+                df = st.session_state.data[st.session_state.data['Date'] != date_ts]
+                st.session_state.data = df.reset_index(drop=True)
+                save_all(st.session_state.data, settings)
+                st.rerun()
 
-else:
-    st.info("Welcome to Scale Trends! Start by adding your first weight entry above.")
+# --- DASHBOARD ---
+df = st.session_state.data.copy()
+chart_config = {'displayModeBar': False, 'scrollZoom': False, 'staticPlot': False}
+
+if not df.empty:
+    ranges = {"Monthly": 30, "Quarterly": 90, "Yearly": 365, "All Time": 9999}
+    start_date = pd.Timestamp.now() - timedelta(days=ranges[view_option])
+    
+    if df['Weight_kg'].notnull().any():
+        df['Weight_7D_Avg'] = df['Weight_kg'].interpolate().rolling(window=7, min_periods=1).mean()
+    
+    view_df = df[df['Date'] >= start_date]
+
+    tab_w, tab_m = st.tabs(["Weight Trend", "Measurements"])
+
+    with tab_w:
+        valid_w = view_df.dropna(subset=['Weight_kg'])
+        if not valid_w.empty:
+            curr = valid_w['Weight_kg'].iloc[-1]
+            st.metric("Current", f"{curr:.1f} kg", delta=f"{curr - settings['Goal_Weight']:.1f} to goal", delta_color="inverse")
+            fig_w = go.Figure()
+            fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_kg'], mode='markers', name='Raw', marker=dict(color='gray', opacity=0.4)))
+            fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_7D_Avg'], mode='lines', name='Trend', line=dict(color='#00CC96', width=4)))
+            fig_w.add_hline(y=settings['Goal_Weight'], line_dash="dash", line_color="red")
+            fig_w.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=350, showlegend=False, xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+            st.plotly_chart(fig_w, use_container_width=True, config=chart_config)
+
+    with tab_m:
+        m_df = view_df.dropna(subset=['M1_val', 'M2_val'], how='all')
+        if not m_df.empty:
+            fig_m = go.Figure()
+            if m_df['M1_val'].notnull().any(): fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M1_val'], mode='lines+markers', name=settings['M1_Name']))
+            if m_df['M2_val'].notnull().any(): fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M2_val'], mode='lines+markers', name=settings['M2_Name']))
+            fig_m.update_layout(margin=dict(l=10, r=10, t=30, b=10), height=350, legend=dict(orientation="h", y=1.1), xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+            st.plotly_chart(fig_m, use_container_width=True, config=chart_config)
