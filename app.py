@@ -1,4 +1,4 @@
-import streamlit as st
+   import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -168,4 +168,3 @@ if not df.empty:
             if m_df['M2_val'].notnull().any(): fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M2_val'], name=settings['M2_Name'], line=dict(color='#FFA15A')))
             fig_m.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=350, legend=dict(orientation="h", y=1.1))
             st.plotly_chart(fig_m, use_container_width=True, config={'displayModeBar': False})
-        
