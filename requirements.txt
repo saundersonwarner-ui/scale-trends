@@ -1,6 +1,4 @@
-streamlit
 pandas
 numpy
 plotly
-gspread
-google-auth
+streamlit-browser-storage
