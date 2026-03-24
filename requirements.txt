@@ -1,4 +1,4 @@
+streamlit
 pandas
 numpy
 plotly
-streamlit-js-eval
