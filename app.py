@@ -3,14 +3,14 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-from streamlit_browser_storage import BrowserStorage
+from streamlit_browser_storage import BrowserStorage # Capitalized Class name
 
 # --- App Configuration ---
 st.set_page_config(page_title="Scale Trends", layout="centered", page_icon="⚖️")
 
 # --- Initialize Private Browser Storage ---
-# This ensures data stays on the user's device and is not shared on the server.
-storage = browser_storage()
+# This ensures data stays on the user's device.
+storage = BrowserStorage()
 
 def load_local_data():
     stored = storage.get("scale_trends_data")
@@ -29,7 +29,7 @@ def load_local_settings():
         return stored
     return {"Goal_Weight": 75.0, "M1_Name": "Chest", "M2_Name": "Waist"}
 
-# Initialize Session State from Browser Storage
+# Initialize Session State
 if 'data' not in st.session_state:
     st.session_state.data = load_local_data()
 if 'settings' not in st.session_state:
@@ -52,32 +52,32 @@ with st.sidebar:
         new_settings = {"Goal_Weight": new_goal, "M1_Name": m1_label, "M2_Name": m2_label}
         st.session_state.settings = new_settings
         storage.set("scale_trends_settings", new_settings)
-        st.success("Settings Saved to Browser!")
+        st.success("Settings Saved!")
         st.rerun()
 
     st.divider()
-    st.subheader("💾 Backup & Migration")
+    st.subheader("💾 Backup & Sync")
     
-    uploaded_file = st.file_uploader("Import/Sync CSV", type="csv")
+    uploaded_file = st.file_uploader("Import CSV", type="csv")
     if uploaded_file is not None:
-        if st.button("Merge CSV to Browser", use_container_width=True):
+        if st.button("Merge to Browser", use_container_width=True):
             up_df = pd.read_csv(uploaded_file)
             up_df['Date'] = pd.to_datetime(up_df['Date'])
             combined = pd.concat([st.session_state.data, up_df], ignore_index=True)
             df = combined.sort_values('Date').drop_duplicates('Date', keep='last').reset_index(drop=True)
             st.session_state.data = df
             storage.set("scale_trends_data", df.to_dict(orient="records"))
-            st.success("Import Successful!")
+            st.success("Imported!")
             st.rerun()
 
     csv_out = st.session_state.data.to_csv(index=False).encode('utf-8')
-    st.download_button("Export/Backup CSV", data=csv_out, file_name="scale_trends_backup.csv", use_container_width=True)
+    st.download_button("Export CSV", data=csv_out, file_name="scale_trends_backup.csv", use_container_width=True)
     
     st.divider()
     view_option = st.selectbox("View Range", ["Monthly", "Quarterly", "Yearly", "All Time"])
 
 # --- INPUT SECTION ---
-with st.expander("➕ Log Today's Progress", expanded=st.session_state.data.empty):
+with st.expander("➕ Log Progress", expanded=st.session_state.data.empty):
     date = st.date_input("Date", datetime.now())
     date_ts = pd.to_datetime(date)
     
@@ -94,13 +94,12 @@ with st.expander("➕ Log Today's Progress", expanded=st.session_state.data.empt
     
     if st.button("SAVE TO BROWSER", type="primary", use_container_width=True):
         df = st.session_state.data
-        # Strict zero filtering: 0.0 becomes None (NaN)
         nw = round(w_in, 1) if w_in > 0 else None
         nm1 = round(m1_in, 1) if m1_in > 0 else None
         nm2 = round(m2_in, 1) if m2_in > 0 else None
 
         if nw is None and nm1 is None and nm2 is None:
-            st.error("Please enter a value greater than 0.")
+            st.error("Enter a value > 0.")
         else:
             if is_existing:
                 idx = existing_row.index[0]
@@ -111,14 +110,12 @@ with st.expander("➕ Log Today's Progress", expanded=st.session_state.data.empt
                 new_entry = {'Date': date_ts, 'Weight_kg': nw, 'M1_val': nm1, 'M2_val': nm2}
                 df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
             
-            # Final cleanup and Sort
             df = df.replace(0, np.nan).dropna(subset=['Weight_kg', 'M1_val', 'M2_val'], how='all')
             df = df.sort_values('Date').reset_index(drop=True)
             
-            # Save to Session AND Browser LocalStorage
             st.session_state.data = df
             storage.set("scale_trends_data", df.to_dict(orient="records"))
-            st.success("Data Saved Privately!")
+            st.success("Saved Privately!")
             st.rerun()
 
 # --- DASHBOARD & CHARTS ---
@@ -128,7 +125,6 @@ if not df.empty:
     ranges = {"Monthly": 30, "Quarterly": 90, "Yearly": 365, "All Time": 9999}
     start_date = pd.Timestamp.now().normalize() - timedelta(days=ranges[view_option])
     
-    # Calculate 10-Day Trimmed Trend
     if df['Weight_kg'].notnull().any():
         def trimmed_mean(s):
             if len(s) >= 3: return np.sort(s)[1:-1].mean()
@@ -145,7 +141,6 @@ if not df.empty:
             goal = settings['Goal_Weight']
             st.metric("Current", f"{curr:.1f} kg", delta=f"{curr - goal:.1f} to goal", delta_color="inverse")
             
-            # Prediction Logic
             if len(df) >= 10 and 'Weight_Trend' in df.columns:
                 recent_t = df['Weight_Trend'].iloc[-1]
                 prev_t = df['Weight_Trend'].iloc[-10]
@@ -155,30 +150,22 @@ if not df.empty:
                 if (rem_kg > 0 and weekly_rate < 0) or (rem_kg < 0 and weekly_rate > 0):
                     weeks_left = abs(rem_kg / weekly_rate)
                     p_date = datetime.now() + timedelta(weeks=weeks_left)
-                    st.success(f"🎯 **Projected Goal Date:** {p_date.strftime('%b %d, %Y')} ({weeks_left:.1f} weeks)")
-                else:
-                    st.info("📉 Not currently trending toward goal.")
+                    st.success(f"🎯 **Goal Prediction:** {p_date.strftime('%b %d, %Y')} ({weeks_left:.1f} weeks)")
             
-            # Plotly Graph
             fig_w = go.Figure()
             fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_kg'], mode='markers', name='Actual', marker=dict(color='gray', opacity=0.4)))
             if 'Weight_Trend' in view_df.columns:
-                fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_Trend'], mode='lines', name='10D Trimmed Trend', line=dict(color='#00CC96', width=4)))
+                fig_w.add_trace(go.Scatter(x=view_df['Date'], y=view_df['Weight_Trend'], mode='lines', name='10D Trend', line=dict(color='#00CC96', width=4)))
             fig_w.add_hline(y=goal, line_dash="dash", line_color="#FF4B4B")
             fig_w.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=350, showlegend=False)
             st.plotly_chart(fig_w, use_container_width=True, config={'displayModeBar': False})
-        else:
-            st.info("No weight logs in this range.")
 
     with tab_m:
         m_df = view_df.dropna(subset=['M1_val', 'M2_val'], how='all')
         if not m_df.empty:
             fig_m = go.Figure()
-            if m_df['M1_val'].notnull().any():
-                fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M1_val'], name=settings['M1_Name'], line=dict(color='#AB63FA')))
-            if m_df['M2_val'].notnull().any():
-                fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M2_val'], name=settings['M2_Name'], line=dict(color='#FFA15A')))
+            if m_df['M1_val'].notnull().any(): fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M1_val'], name=settings['M1_Name'], line=dict(color='#AB63FA')))
+            if m_df['M2_val'].notnull().any(): fig_m.add_trace(go.Scatter(x=m_df['Date'], y=m_df['M2_val'], name=settings['M2_Name'], line=dict(color='#FFA15A')))
             fig_m.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=350, legend=dict(orientation="h", y=1.1))
             st.plotly_chart(fig_m, use_container_width=True, config={'displayModeBar': False})
-else:
-    st.info("Welcome! Log your first weight above to start your private trend chart.")
+        
