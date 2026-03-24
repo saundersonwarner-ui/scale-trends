@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-from streamlit_browser_storage import browser_storage
+from streamlit_browser_storage import BrowserStorage
 
 # --- App Configuration ---
 st.set_page_config(page_title="Scale Trends", layout="centered", page_icon="⚖️")
